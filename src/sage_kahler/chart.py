@@ -132,7 +132,14 @@ class ComplexChart:
         return self._real_coordinates
 
     def to_real(self, expression):
-        """Rewrite a formal expression in the chart's real coordinates."""
+        """Rewrite a formal expression in the chart's real coordinates.
+
+        As for the Dolbeault operators, coordinate-dependent ``abs(f)`` is
+        first rewritten as ``sqrt(f * bar(f))``.
+        """
+        from .forms import _formalize_absolute_values
+
+        expression = _formalize_absolute_values(SR(expression), self)
         substitutions = {}
         for coordinate, conjugate_coordinate, (x, y) in zip(
             self._coordinates,

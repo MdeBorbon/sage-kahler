@@ -103,6 +103,9 @@ def test_real_coordinate_realization():
     assert chart.to_real(v) == xv + I * yv
     assert chart.to_real(bar(v)) == xv - I * yv
     assert chart.to_real(abs2(v)) == xv**2 + yv**2
+    assert chart.to_real(abs(v)**2) == xv**2 + yv**2
+    assert chart.to_real(abs(v)) == sqrt(xv**2 + yv**2)
+    assert chart.to_real(abs(v**2 + 1)**2) == chart.to_real(abs2(v**2 + 1))
 
 
 def test_wirtinger_derivatives_agree_with_real_coordinate_derivatives():
