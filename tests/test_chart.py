@@ -41,3 +41,21 @@ def test_default_real_names_do_not_collide_with_complex_names():
     chart = ComplexChart(1, names=("x",))
 
     assert tuple(map(str, chart.real_coordinates()[0])) == ("re_x", "im_x")
+
+
+def test_recreated_chart_accepts_forms_from_the_earlier_chart():
+    from sage_kahler.all import abs2, ddbar
+
+    first = ComplexChart(2, names=("rerun_z", "rerun_w"))
+    form = ddbar(abs2(first.coordinates()[0]))
+    # Re-running a notebook cell creates a new chart on the same symbols.
+    second = ComplexChart(2, names=("rerun_z", "rerun_w"))
+    z, w = second.coordinates()
+
+    assert second == first
+    assert hash(second) == hash(first)
+    assert form + ddbar(abs2(w)) == (
+        second.dz(0).wedge(second.dzbar(0)) + second.dz(1).wedge(second.dzbar(1))
+    )
+    # Coordinate order defines the basis, so a reordered chart differs.
+    assert second != ComplexChart(2, names=("rerun_w", "rerun_z"))

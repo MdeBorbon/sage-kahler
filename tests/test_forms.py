@@ -274,3 +274,38 @@ def test_metric_matrix_and_determinant_norm_display():
     assert rf"\bar{{{latex(w)}}}" in rendered
     assert "sqrt" not in rendered
     assert mixed.matrix().ncols() == 2
+
+
+def test_rational_coefficients_are_printed_without_parentheses():
+    chart = ComplexChart(2, names=("print_z", "print_w"))
+    z, w = chart.coordinates()
+
+    assert repr(2 * chart.dz(0)) == "2 dprint_z"
+    assert repr(-chart.dz(0) * (SR(1) / 2) + chart.dz(1)) == "-1/2 dprint_z + dprint_w"
+    assert repr((1 + 2*I) * chart.dz(0)) == "(2*I + 1) dprint_z"
+    assert repr(z * chart.dz(1)) == "(print_z) dprint_w"
+
+
+def test_products_of_norms_cancel_in_coefficients():
+    chart = ComplexChart(2, names=("prod_z", "prod_w"))
+    z, w = chart.coordinates()
+    # |z| |w| = |z w| on the chart, although the formal radicals differ.
+    vanishing = sqrt(abs2(z)) * sqrt(abs2(w)) - sqrt(abs2(z * w))
+
+    assert chart.display(vanishing).terms() == {}
+    assert chart.display(vanishing) == 0
+    assert sqrt(abs2(z)) * chart.dz(0) != sqrt(abs2(w)) * chart.dz(0)
+
+
+def test_display_and_simplification_do_not_leak_temporary_variables():
+    from sage.symbolic.assumptions import assumptions
+
+    chart = ComplexChart(2, names=("leak_z", "leak_w"))
+    z, w = chart.coordinates()
+    metric = ddbar(sqrt(abs(z)**2 + abs(w)**2 + 2*abs(z*w - 1) + 2))
+    before = (len(assumptions()), len(SR.symbols))
+    for _ in range(3):
+        repr(metric), latex(metric), repr(det(metric))
+        ddbar(abs(z)**2 + abs(w)**2)
+
+    assert (len(assumptions()), len(SR.symbols)) == before

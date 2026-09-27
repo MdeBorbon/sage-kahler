@@ -195,6 +195,23 @@ class ComplexChart:
             label = rf"\bar{{{label}}}"
         return f"d{label}"
 
+    def _key(self):
+        return tuple(map(str, self._coordinates + self._conjugate_coordinates))
+
+    def __eq__(self, other):
+        """Charts on the same symbolic coordinates are interchangeable.
+
+        Re-running ``ComplexChart(2, names=("z", "w"))`` in a notebook gives
+        a chart that accepts forms built on the earlier one. Real coordinate
+        names only affect ``to_real`` and are not compared.
+        """
+        if not isinstance(other, ComplexChart):
+            return NotImplemented
+        return self._key() == other._key()
+
+    def __hash__(self):
+        return hash(self._key())
+
     def __repr__(self):
         coordinates = ", ".join(map(str, self._coordinates))
         return (

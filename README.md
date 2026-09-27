@@ -67,6 +67,20 @@ partial^2 = dbar^2 = 0
 partial*dbar = -dbar*partial
 ```
 
+Charts on the same coordinate names are interchangeable, so re-running
+`X = ComplexChart(2, names=("z", "w"))` in a notebook keeps earlier forms
+usable. A chart with the same names in a different order is a different chart,
+and the most recently created one is used when a chart is inferred.
+
+Declare real parameters with `var("beta", domain="real")`. Otherwise, `bar`
+treats them as complex and produces `conjugate(beta)`.
+
+`form1 == form2` is `True` only when every coefficient difference is proven to
+vanish, by exact cancellation of coordinate square roots or by
+`simplify_full`. On the chart, `sqrt(F * bar(F))` is taken to be `|F|`, so
+for example `|z| |w| = |z w|`. A `False` result means no proof was found; a
+difference that is clearly nonzero at a sample point is reported immediately.
+
 ## Development
 
 Activate your Sage environment (for example, `conda activate sage` for a Conda

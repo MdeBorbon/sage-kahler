@@ -134,3 +134,14 @@ def test_radical_cancellation_agrees_with_the_unsimplified_determinant():
         w: -1/5 + 2*I/7, bar(w): -1/5 - 2*I/7,
     }
     assert abs(CC(det(form).raw().subs(point)) - CC(raw.subs(point))) < 1e-12
+
+
+def test_equality_proves_radical_identities_exactly():
+    chart = ComplexChart(2, names=("equal_z", "equal_w"))
+    z, w = chart.coordinates()
+    phi = sqrt(abs(z)**2 + abs(w)**2 + 2*abs(z*w - 1) + 2)
+    metric = ddbar(phi)
+
+    assert metric == partial(dbar(phi))
+    assert metric == metric.raw()
+    assert metric != metric + chart.dz(0).wedge(chart.dzbar(0))

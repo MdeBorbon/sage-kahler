@@ -1,18 +1,85 @@
 """Sparse complex differential forms and Dolbeault operators."""
 
 import operator
+import random
 import re
+from contextlib import contextmanager
 from copy import copy
 
-from sage.all import QQ, SR, ZZ, PolynomialRing, QuadraticField, latex, matrix, sqrt
+from sage.all import (
+    I, QQ, SR, ZZ, ComplexField, PolynomialRing, QuadraticField, latex, matrix, sqrt,
+)
 from sage.functions.other import abs_symbolic
 from sage.symbolic.operators import add_vararg, mul_vararg
 
-from .conjugation import bar, chart_for_expression
+from .conjugation import bar, chart_for_expression, conjugate_variable
 
 
-def _is_zero(expression):
-    return bool(SR(expression).simplify_full() == 0)
+@contextmanager
+def _temporary_variables():
+    """Yield a ``SR.temp_var`` factory, then forget its variables.
+
+    Temporary variables with a domain add Maxima assumptions, which would
+    otherwise accumulate and slow down later simplification.
+    """
+    created = []
+
+    def new_variable(**kwds):
+        variable = SR.temp_var(**kwds)
+        created.append(variable)
+        return variable
+
+    try:
+        yield new_variable
+    finally:
+        SR.cleanup_var(created)
+
+
+def _sample_point(variables):
+    """Return a fixed generic point, with conjugate coordinates conjugate."""
+    point = {}
+    for variable in variables:
+        partner = conjugate_variable(variable)
+        # Seed by name, so every run and every pair member agrees.
+        names = [str(variable)] + ([str(partner)] if partner is not None else [])
+        seed = min(names)
+        generator = random.Random(seed)
+        real = QQ(generator.randint(300, 1300)) / 1009
+        if partner is None:
+            point[variable] = real
+        else:
+            imaginary = QQ(generator.randint(300, 1300)) / 1013
+            sign = 1 if str(variable) == seed else -1
+            point[variable] = real + sign * imaginary * I
+    return point
+
+
+def _is_nonzero_at_sample_point(expression):
+    """Return True when ``expression`` is clearly nonzero at a generic point."""
+    try:
+        value = expression.subs(_sample_point(expression.variables())).n(prec=200)
+        magnitude = abs(ComplexField(200)(value))
+    except (ArithmeticError, TypeError, ValueError, RuntimeError):
+        return False
+    return bool(not magnitude.is_infinity() and magnitude > 1e-12)
+
+
+def _is_zero(expression, chart=None):
+    """Return True when a vanishing proof is found for ``expression``.
+
+    A nonzero value at a generic point proves the expression is nonzero,
+    which avoids symbolic simplification for most coefficients. Otherwise
+    try exact cancellation in the coordinates and their square roots, then
+    ``simplify_full``. False means no proof of vanishing was found.
+    """
+    expression = SR(expression)
+    if expression.is_trivial_zero():
+        return True
+    if _is_nonzero_at_sample_point(expression):
+        return False
+    if chart is not None and _cancel_radicals(expression, chart, zero_test=True):
+        return True
+    return bool(expression.simplify_full() == 0)
 
 
 def _wedge_basis(left, right):
@@ -51,7 +118,7 @@ class DifferentialForm:
         self._terms = {
             basis: coefficient
             for basis, coefficient in combined.items()
-            if not _is_zero(coefficient)
+            if not _is_zero(coefficient, chart)
         }
         self._conditions = tuple(dict.fromkeys(conditions))
         self._radial_indices = tuple(sorted(set(radial_indices)))
@@ -209,7 +276,7 @@ class DifferentialForm:
 
     def _coerce(self, other):
         if isinstance(other, DifferentialForm):
-            if other.chart is not self._chart:
+            if other.chart != self._chart:
                 raise ValueError("differential forms must belong to the same chart")
             return other
         return DifferentialForm(self._chart, {(): SR(other)})
@@ -293,7 +360,8 @@ class DifferentialForm:
         return all(
             _is_zero(
                 self._terms.get(basis, SR.zero())
-                - other._terms.get(basis, SR.zero())
+                - other._terms.get(basis, SR.zero()),
+                self._chart,
             )
             for basis in bases
         )
@@ -310,10 +378,12 @@ class DifferentialForm:
             basis_text = " ∧ ".join(self._chart._basis_label(index) for index in basis)
             if not basis_text:
                 pieces.append(coefficient_text)
-            elif coefficient == 1:
+            elif (coefficient - 1).is_trivial_zero():
                 pieces.append(basis_text)
-            elif coefficient == -1:
+            elif (coefficient + 1).is_trivial_zero():
                 pieces.append(f"-{basis_text}")
+            elif not coefficient.variables() and coefficient in QQ:
+                pieces.append(f"{coefficient_text} {basis_text}")
             else:
                 pieces.append(f"({coefficient_text}) {basis_text}")
         return " + ".join(pieces).replace("+ -", "- ")
@@ -333,9 +403,9 @@ class DifferentialForm:
             )
             if not basis_text:
                 pieces.append(coefficient_text)
-            elif coefficient == 1:
+            elif (coefficient - 1).is_trivial_zero():
                 pieces.append(basis_text)
-            elif coefficient == -1:
+            elif (coefficient + 1).is_trivial_zero():
                 pieces.append(f"-{basis_text}")
             else:
                 # Group sums so the coefficient multiplies the entire basis.
@@ -346,25 +416,28 @@ class DifferentialForm:
 
 
 def _simplify_radial_coefficient(expression, chart):
+    with _temporary_variables() as new_variable:
+        return _simplify_radial_coefficient_using(new_variable, expression, chart)
+
+
+def _simplify_radial_coefficient_using(new_variable, expression, chart):
     simplified = SR(expression)
     used_indices = []
     nonzero_indices = []
     for index, (coordinate, conjugate_coordinate) in enumerate(
         zip(chart.coordinates(), chart.conjugate_coordinates())
     ):
-        variables = simplified.variables()
+        # Sets compare symbols by hash; tuple membership would ask Maxima.
+        variables = set(simplified.variables())
         if coordinate not in variables or conjugate_coordinate not in variables:
             continue
         # Test radial dependence by elimination, not by differentiating the
         # already differentiated coefficient and invoking simplify_full().
-        radial_variable = SR.temp_var()
+        radial_variable = new_variable()
         candidate = simplified.subs(
             {coordinate: radial_variable / conjugate_coordinate}
         ).simplify()
-        if (
-            coordinate in candidate.variables()
-            or conjugate_coordinate in candidate.variables()
-        ):
+        if {coordinate, conjugate_coordinate}.intersection(candidate.variables()):
             continue
         try:
             is_polynomial_at_zero = candidate.is_polynomial(radial_variable)
@@ -415,41 +488,70 @@ def _half_integer_exponent(value):
     return doubled if doubled % 2 else None
 
 
-def _cancel_radicals(expression, chart):
+# Rationalizing a denominator can double its degree once per radical.
+_MAX_RADICALS = 6
+
+
+def _cancel_radicals(expression, chart, *, zero_test=False):
     """Cancel square roots of coordinate expressions using ``t^2 = A``.
 
     Each ``A^(k/2)`` becomes ``t^k`` for a new symbol ``t``, nested radicands
-    first. The resulting rational function is reduced modulo the relations,
-    its denominator is rationalized one radical at a time, and common factors
-    are cancelled. Returns None unless the expression is rational in the
-    coordinates, parameters and radicals.
+    first. A radicand ``c * prod (F_i * bar(F_i))^e_i`` is first split into
+    ``sqrt(c) * prod |F_i|^e_i``, which holds on the chart. The resulting
+    rational function is reduced modulo the relations, its denominator is
+    rationalized one radical at a time, and common factors are cancelled.
+
+    Returns None unless the expression is rational in the coordinates,
+    parameters and at most ``_MAX_RADICALS`` radicals. Without radicals it
+    also returns None, unless ``zero_test`` is set. With ``zero_test``, return
+    whether the reduced numerator vanishes instead of the simplified value.
     """
+    with _temporary_variables() as new_variable:
+        return _cancel_radicals_using(new_variable, expression, chart, zero_test)
+
+
+def _cancel_radicals_using(new_variable, expression, chart, zero_test):
     coordinates = set(chart.coordinates() + chart.conjugate_coordinates())
     radicals = []  # (symbol, radicand in earlier symbols), innermost first
 
+    def radical(radicand):
+        for symbol, known in radicals:
+            if (known - radicand).expand().is_trivial_zero():
+                return symbol
+        symbol = new_variable()
+        radicals.append((symbol, radicand))
+        return symbol
+
     def extract(value):
-        if not coordinates.intersection(value.variables()):
-            return value
         operands = value.operands()
         if not operands:
             return value
         doubled = _half_integer_exponent(value)
+        variables = value.variables()
+        if not coordinates.intersection(variables) and (
+            variables or doubled is None
+        ):
+            return value
         if doubled is not None:
             radicand = extract(operands[0])
-            for symbol, known in radicals:
-                if (known - radicand).expand().is_zero():
-                    return symbol**doubled
-            symbol = SR.temp_var()
-            radicals.append((symbol, radicand))
-            return symbol**doubled
+            norm = _conjugate_norm(radicand, chart)
+            if norm is None or not norm[0].is_square():
+                return radical(radicand) ** doubled
+            constant, factors = norm
+            result = SR(constant.sqrt()) ** doubled
+            for factor, exponent in factors:
+                result *= radical(factor * bar(factor)) ** (exponent * doubled)
+            return result
         return value.operator()(*(extract(operand) for operand in operands))
 
     rational = extract(SR(expression))
-    if not radicals:
+    if (not radicals and not zero_test) or len(radicals) > _MAX_RADICALS:
         return None
+    # Radical symbols may have cancelled from the extracted expression.
     variables = sorted(
         set(rational.variables()).union(
-            *(radicand.variables() for _, radicand in radicals)
+            (symbol for symbol, _ in radicals),
+            *(radicand.variables() for _, radicand in radicals),
         ),
         key=str,
     )
@@ -485,7 +587,7 @@ def _cancel_radicals(expression, chart):
                 )
                 for symbol, radicand in radicals
             ]
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, ZeroDivisionError):
             continue
         break
     else:
@@ -505,6 +607,8 @@ def _cancel_radicals(expression, chart):
         return polynomial
 
     numerator = reduce_relations(value.numerator())
+    if zero_test:
+        return numerator.is_zero()
     denominator = reduce_relations(value.denominator())
     if numerator.is_zero():
         return SR.zero()
@@ -584,9 +688,9 @@ def _conjugate_norm(radicand, chart):
         for index, (other, other_exponent) in enumerate(remaining):
             if other_exponent != exponent:
                 continue
-            if (other - conjugate).expand().is_zero():
+            if (other - conjugate).expand().is_trivial_zero():
                 sign = 1
-            elif (other + conjugate).expand().is_zero():
+            elif (other + conjugate).expand().is_trivial_zero():
                 sign = -1
             else:
                 continue
@@ -615,15 +719,20 @@ def _format_coefficient(expression, chart, *, latex_mode=False):
     The radial metadata is deliberately not required for display. Square
     roots of ``c * F * bar(F)`` likewise display as ``sqrt(c) * |F|``.
     """
+    with _temporary_variables() as new_variable:
+        return _format_coefficient_using(new_variable, expression, chart, latex_mode)
+
+
+def _format_coefficient_using(new_variable, expression, chart, latex_mode):
     pairs = tuple(zip(chart.coordinates(), chart.conjugate_coordinates()))
-    radii = tuple(SR.temp_var(domain="positive") for _ in pairs)
+    radii = tuple(new_variable(domain="positive") for _ in pairs)
     norms = []  # (F, positive token displayed as |F|)
 
     def norm_token(factor):
         for known, token in norms:
-            if (known - factor).expand().is_zero():
+            if (known - factor).expand().is_trivial_zero():
                 return token
-        token = SR.temp_var(domain="positive")
+        token = new_variable(domain="positive")
         norms.append((factor, token))
         return token
 
@@ -632,15 +741,15 @@ def _format_coefficient(expression, chart, *, latex_mode=False):
         if operands:
             value = value.operator()(*(rewrite(operand) for operand in operands))
         for (coordinate, conjugate_coordinate), radius in zip(pairs, radii):
-            variables = value.variables()
+            # Sets compare symbols by hash; tuple membership would ask Maxima.
+            variables = set(value.variables())
             if coordinate not in variables or conjugate_coordinate not in variables:
                 continue
             candidate = value.subs(
                 {coordinate: radius**2 / conjugate_coordinate}
             ).simplify()
-            if (
-                coordinate not in candidate.variables()
-                and conjugate_coordinate not in candidate.variables()
+            if not {coordinate, conjugate_coordinate}.intersection(
+                candidate.variables()
             ):
                 value = candidate
         doubled = _half_integer_exponent(value)
@@ -655,7 +764,7 @@ def _format_coefficient(expression, chart, *, latex_mode=False):
 
     display_expression = _compact_polynomial_sums(rewrite(SR(expression)))
     # Use unique tokens rather than replacing coordinate-name substrings.
-    conjugate_tokens = tuple(SR.temp_var() for _ in pairs)
+    conjugate_tokens = tuple(new_variable() for _ in pairs)
     display_expression = display_expression.subs({
         conjugate: token
         for (_, conjugate), token in zip(pairs, conjugate_tokens)
@@ -699,7 +808,7 @@ def wedge(left, right):
 
 def _as_form(value, chart):
     if isinstance(value, DifferentialForm):
-        if chart is not None and value.chart is not chart:
+        if chart is not None and value.chart != chart:
             raise ValueError("the supplied chart does not match the differential form")
         return value
     if chart is None:
@@ -744,7 +853,8 @@ def _differentiate(value, kind, chart=None):
         coefficient = _formalize_absolute_values(coefficient, chart)
         for index, coordinate in enumerate(coordinates):
             derivative = coefficient.diff(coordinate)
-            if _is_zero(derivative):
+            # The form constructor removes derivatives that vanish.
+            if derivative.is_trivial_zero():
                 continue
             sign, new_basis = _wedge_basis((offset + index,), basis)
             if sign:
@@ -797,7 +907,16 @@ def _radial_hessian(form):
     coordinates = chart.coordinates()
     conjugates = chart.conjugate_coordinates()
     radius_squared = sum(z * zb for z, zb in zip(coordinates, conjugates))
-    rho = SR.temp_var(domain="positive")
+    with _temporary_variables() as new_variable:
+        return _radial_hessian_using(
+            new_variable(domain="positive"), form, radius_squared
+        )
+
+
+def _radial_hessian_using(rho, form, radius_squared):
+    chart = form.chart
+    coordinates = chart.coordinates()
+    conjugates = chart.conjugate_coordinates()
     expression = _formalize_absolute_values(form._terms[()], chart)
     remainder = radius_squared - coordinates[0] * conjugates[0]
     profile = expression.subs({coordinates[0]: (rho - remainder) / conjugates[0]})

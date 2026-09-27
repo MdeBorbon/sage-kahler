@@ -20,6 +20,11 @@ def register_coordinate_pair(chart, coordinate, conjugate_coordinate):
         _VARIABLE_CHARTS[left] = chart
 
 
+def conjugate_variable(variable):
+    """Return the registered formal conjugate of ``variable``, or None."""
+    return _CONJUGATES.get(variable)
+
+
 def chart_for_expression(expression):
     """Return the unique registered chart containing an expression's variables."""
     expression = SR(expression)
