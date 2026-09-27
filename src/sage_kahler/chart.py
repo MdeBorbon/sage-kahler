@@ -1,6 +1,6 @@
 """Local holomorphic coordinate charts."""
 
-from sage.all import I, SR
+from sage.all import I, SR, latex
 
 from .conjugation import register_coordinate_pair
 
@@ -91,7 +91,10 @@ class ComplexChart:
         self._dimension = integer_dimension
         self._coordinate_names = names
         self._coordinates = tuple(SR.var(name) for name in names)
-        self._conjugate_coordinates = tuple(SR.var(name) for name in bar_names)
+        self._conjugate_coordinates = tuple(
+            SR.var(name, latex_name=rf"\bar{{{latex(coordinate)}}}")
+            for name, coordinate in zip(bar_names, self._coordinates)
+        )
         real_variables = tuple(SR.var(name) for name in real_names)
         self._real_coordinates = tuple(
             (real_variables[2 * index], real_variables[2 * index + 1])
@@ -129,6 +132,20 @@ class ComplexChart:
             substitutions[coordinate] = x + I * y
             substitutions[conjugate_coordinate] = x - I * y
         return SR(expression).subs(substitutions).expand().simplify_full()
+
+    def display(self, expression):
+        """Display a scalar or matrix with chart-aware norms and conjugates.
+
+        Scalars are wrapped as zero-forms; their original coefficient is in
+        ``terms()[()]``. Matrix displays provide ``matrix()`` to retrieve a
+        copy of the original Sage matrix. Neither changes the input.
+        """
+        from sage.structure.element import Matrix
+        from .forms import DifferentialForm, _MatrixDisplay
+
+        if isinstance(expression, Matrix):
+            return _MatrixDisplay(self, expression)
+        return DifferentialForm(self, {(): SR(expression)})
 
     def dz(self, index):
         """Return the coordinate ``(1, 0)`` basis form at ``index``."""
@@ -170,6 +187,13 @@ class ComplexChart:
         if combined_index < self._dimension:
             return f"d{self._coordinate_names[combined_index]}"
         return f"dbar({self._coordinate_names[combined_index - self._dimension]})"
+
+    def _basis_latex(self, combined_index):
+        coordinate = self._coordinates[combined_index % self._dimension]
+        label = str(latex(coordinate))
+        if combined_index >= self._dimension:
+            label = rf"\bar{{{label}}}"
+        return f"d{label}"
 
     def __repr__(self):
         coordinates = ", ".join(map(str, self._coordinates))
