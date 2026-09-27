@@ -161,6 +161,20 @@ class ComplexChart:
         self._validate_index(index)
         return basis_form(self, self._dimension + index)
 
+    def d_dz(self, index):
+        """Return the coordinate ``(1, 0)`` vector field ``d/dz^index``."""
+        from .vectors import basis_vector
+
+        self._validate_index(index)
+        return basis_vector(self, index)
+
+    def d_dzbar(self, index):
+        """Return the coordinate ``(0, 1)`` vector field ``d/dzbar^index``."""
+        from .vectors import basis_vector
+
+        self._validate_index(index)
+        return basis_vector(self, self._dimension + index)
+
     def partial(self, value):
         """Apply ``partial`` using this chart."""
         from .forms import partial
@@ -194,6 +208,18 @@ class ComplexChart:
         if combined_index >= self._dimension:
             label = rf"\bar{{{label}}}"
         return f"d{label}"
+
+    def _vector_label(self, combined_index):
+        if combined_index < self._dimension:
+            return f"∂/∂{self._coordinate_names[combined_index]}"
+        return f"∂/∂bar({self._coordinate_names[combined_index - self._dimension]})"
+
+    def _vector_latex(self, combined_index):
+        coordinate = self._coordinates[combined_index % self._dimension]
+        label = str(latex(coordinate))
+        if combined_index >= self._dimension:
+            label = rf"\bar{{{label}}}"
+        return rf"\frac{{\partial}}{{\partial {label}}}"
 
     def _key(self):
         return tuple(map(str, self._coordinates + self._conjugate_coordinates))
