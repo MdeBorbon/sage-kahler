@@ -1,6 +1,6 @@
 import pytest
 
-from sage.all import I, SR, identity_matrix, log, matrix, var
+from sage.all import I, SR, identity_matrix, latex, log, matrix, var
 
 from sage_kahler.all import (
     ComplexChart,
@@ -20,7 +20,7 @@ def test_components_follow_the_potential_hessian():
     metric = HermitianMetric.from_potential(potential)
 
     assert metric.matrix().raw() == matrix(SR, [[2, 1], [1, 3]])
-    assert metric[0, 1] == 1
+    assert metric[1, 2] == 1
     assert metric.det() == 5
     assert metric.fundamental_form() == I * ddbar(potential)
 
@@ -28,7 +28,7 @@ def test_components_follow_the_potential_hessian():
 def test_from_form_removes_the_factor_of_i():
     chart = ComplexChart(2, names=("form_a", "form_b"))
     omega = I * (
-        wedge(chart.dz(0), chart.dzbar(0)) + 2 * wedge(chart.dz(1), chart.dzbar(1))
+        wedge(chart.dz(1), chart.dzbar(1)) + 2 * wedge(chart.dz(2), chart.dzbar(2))
     )
     metric = HermitianMetric.from_form(omega)
 
@@ -111,6 +111,47 @@ def test_absolute_values_in_components_are_differentiated_correctly():
     z, w = chart.coordinates()
 
     assert not HermitianMetric(chart, [[1, 0], [0, 1 + abs(z) ** 2]]).is_kahler()
+
+
+def test_display_is_the_symmetric_tensor_not_the_form():
+    chart = ComplexChart(2, names=("show_z", "show_w"))
+    metric = HermitianMetric(chart, [[2, -1], [-1, 1]])
+
+    assert repr(metric) == (
+        "2 (dshow_z ⊗ dbar(show_z) + dbar(show_z) ⊗ dshow_z)"
+        " - (dshow_z ⊗ dbar(show_w) + dbar(show_w) ⊗ dshow_z)"
+        " - (dshow_w ⊗ dbar(show_z) + dbar(show_z) ⊗ dshow_w)"
+        " + dshow_w ⊗ dbar(show_w) + dbar(show_w) ⊗ dshow_w"
+    )
+    assert r"\otimes" in latex(metric)
+    assert r"\wedge" not in latex(metric)
+
+
+def test_evaluation_at_a_point_substitutes_conjugate_coordinates():
+    chart = ComplexChart(2, names=("eval_z", "eval_w"))
+    z, w = chart.coordinates()
+    metric = HermitianMetric.from_potential(log(1 + abs2(z) + abs2(w)))
+
+    assert metric(eval_z=0, eval_w=0).matrix().raw() == identity_matrix(2)
+    assert metric({z: I, w: 1}).matrix().raw() == matrix(
+        SR, [[2 / 9, I / 9], [-I / 9, 2 / 9]]
+    )
+    partial = metric.subs(eval_z=0)
+    assert partial.matrix().raw()[1, 1] == 1 / (1 + abs2(w)) ** 2
+    assert partial.is_hermitian()
+
+
+def test_evaluation_accepts_parameters_by_name():
+    chart = ComplexChart(1, names=("evparam_z",))
+    (z,) = chart.coordinates()
+    scale = var("metric_eval_scale")
+    metric = HermitianMetric(chart, [[scale * (1 + abs2(z))]])
+
+    assert metric(evparam_z=2, metric_eval_scale=3).matrix().raw() == matrix(
+        SR, [[15]]
+    )
+    with pytest.raises(ValueError):
+        metric(no_such_variable=1)
 
 
 def test_rejects_wrong_matrix_size():

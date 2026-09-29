@@ -49,8 +49,10 @@ def test_radical_log_potential_uses_compact_radial_hessian(monkeypatch, use_abs)
     assert "symbol" not in rendered
     # The raw terms retain the same Hessian before one-variable cancellation.
     for basis, coefficient in result.raw().terms().items():
+        # Combined indices from 1: dz^i is i and dzbar^j is 2 + j.
         i, combined_j = basis
-        assert (coefficient.subs(axis) - coefficients[i, combined_j - 2].subs(axis)).simplify_full() == 0
+        entry = coefficients[i - 1, combined_j - 3]
+        assert (coefficient.subs(axis) - entry.subs(axis)).simplify_full() == 0
 
 
 def test_radial_polynomials_and_nonradial_fallback():
@@ -144,4 +146,4 @@ def test_equality_proves_radical_identities_exactly():
 
     assert metric == partial(dbar(phi))
     assert metric == metric.raw()
-    assert metric != metric + chart.dz(0).wedge(chart.dzbar(0))
+    assert metric != metric + chart.dz(1).wedge(chart.dzbar(1))

@@ -5,8 +5,13 @@ vectors, is determined by its components
 
     g_{j kbar} = g(d/dz^j, d/dzbar^k),
 
-with ``g(d/dz^j, d/dz^k) = g(d/dzbar^j, d/dzbar^k) = 0``. The Hermitian
-condition is ``bar(g_{j kbar}) = g_{k jbar}`` and the associated form is
+with ``g(d/dz^j, d/dz^k) = g(d/dzbar^j, d/dzbar^k) = 0``, that is
+
+    g = g_{j kbar} (dz^j ⊗ dzbar^k + dzbar^k ⊗ dz^j),
+
+which is how a metric is displayed. It is symmetric, not a form. The
+Hermitian condition is ``bar(g_{j kbar}) = g_{k jbar}`` and the associated
+form is
 
     omega = I * sum g_{j kbar} dz^j ∧ dzbar^k.
 
@@ -27,14 +32,17 @@ For a potential ``phi``, ``omega = I * partial(dbar(phi))``, so
 #                  https://www.gnu.org/licenses/
 # ****************************************************************************
 
-from sage.all import CDF, I, SR, log, matrix
+from sage.all import CDF, I, QQ, SR, log, matrix
+from sage.symbolic.operators import add_vararg
 
 from .conjugation import bar
 from .forms import (
     DifferentialForm,
     _as_form,
+    _format_coefficient,
     _formalize_absolute_values,
     _is_zero,
+    _point_substitutions,
     _simplify_scalar,
     ddbar,
 )
@@ -99,11 +107,42 @@ class HermitianMetric:
         return ChartMatrix.from_matrix(self._components, self._chart)
 
     def __getitem__(self, key):
-        """Return ``g_{j kbar}`` for ``metric[j, k]``."""
-        j, k = key
+        """Return ``g_{j kbar}`` for ``metric[j, k]``, from the chart's start index."""
+        j, k = (self._chart._position(index) for index in key)
         return ChartExpression(SR, self._components[j, k], self._chart)
 
-    def __call__(self, first, second):
+    def __call__(self, *args, **values):
+        """Evaluate on vector fields, ``g(X, Y)``, or at a point, ``g(z=0)``.
+
+        With two vector fields, see ``pair``. With keyword arguments or a
+        dict, this is ``subs``: ``g(z=0, w=0)`` is the metric with constant
+        coefficients ``g_{j kbar}(0)``.
+        """
+        if len(args) == 2 and not values:
+            return self.pair(*args)
+        if len(args) <= 1:
+            return self.subs(*args, **values)
+        raise TypeError("expected two vector fields or values for the variables")
+
+    def subs(self, values=None, **names):
+        """Return the metric with the given values substituted in ``g_{j kbar}``.
+
+        Values are keyed by chart coordinates or parameters, given as Sage
+        variables or by name: ``g.subs({z: 0})`` or ``g.subs(z=0)``. Each
+        conjugate coordinate ``zbar`` gets ``bar`` of the value given for
+        ``z``, unless it is given a value itself.
+        """
+        substitutions = _point_substitutions(
+            self._chart, self._components.list(), values, names
+        )
+        components = self._components.subs(substitutions).apply_map(
+            lambda entry: _simplify_scalar(entry, self._chart)
+        )
+        return HermitianMetric(self._chart, components, conditions=self._conditions)
+
+    substitute = subs
+
+    def pair(self, first, second):
         """Evaluate ``g(X, Y)`` on complex tangent vectors, bilinearly.
 
         With ``g = g_{j kbar} (dz^j ⊗ dzbar^k + dzbar^k ⊗ dz^j)`` this is
@@ -121,8 +160,8 @@ class HermitianMetric:
         total = sum(
             (
                 self._components[j, k] * (
-                    first[j] * second[dimension + k]
-                    + first[dimension + k] * second[j]
+                    first._component(j) * second._component(dimension + k)
+                    + first._component(dimension + k) * second._component(j)
                 )
                 for j in range(dimension)
                 for k in range(dimension)
@@ -143,7 +182,7 @@ class HermitianMetric:
         function = _formalize_absolute_values(_raw(function), self._chart)
         dimension = self._chart.dimension()
         derivatives = [function.diff(zbar) for zbar in self._chart.conjugate_coordinates()]
-        return VectorField(
+        return VectorField._internal(
             self._chart,
             {
                 j: _simplify_scalar(
@@ -187,7 +226,7 @@ class HermitianMetric:
     def fundamental_form(self):
         """Return ``omega = I * sum g_{j kbar} dz^j ∧ dzbar^k``."""
         dimension = self._chart.dimension()
-        return DifferentialForm(
+        return DifferentialForm._internal(
             self._chart,
             {
                 (j, dimension + k): I * self._components[j, k]
@@ -274,7 +313,7 @@ class HermitianMetric:
     def laplacian(self, function):
         """Return ``g^{k lbar} d_k d_lbar function``."""
         form = _as_form(function, self._chart)
-        if set(form.terms()) - {()}:
+        if set(form._terms) - {()}:
             raise ValueError("laplacian requires a scalar function")
         hessian = ddbar(form).coefficient_matrix(display=False)
         return ChartExpression(SR, self._trace_matrix(hessian), self._chart)
@@ -290,9 +329,9 @@ class HermitianMetric:
     def ricci_form(self):
         """Return ``Ric(omega) = I R_{i jbar} dz^i ∧ dzbar^j = -I ddbar(log det g)``."""
         form = -I * ddbar(log(self.determinant().raw()), chart=self._chart)
-        return DifferentialForm(
+        return DifferentialForm._internal(
             self._chart,
-            form.terms(),
+            form._terms,
             conditions=self._conditions + form.conditions(),
         )
 
@@ -323,9 +362,45 @@ class HermitianMetric:
         return _simplify_scalar(SR(total), self._chart)
 
     def __repr__(self):
-        return f"Hermitian metric with form {self.fundamental_form()!r}"
+        """Show ``g = g_{j kbar} (dz^j ⊗ dzbar^k + dzbar^k ⊗ dz^j)``."""
+        return self._display(latex_mode=False)
 
     def _latex_(self):
-        from sage.all import latex
+        return self._display(latex_mode=True)
 
-        return latex(self.fundamental_form())
+    def _display(self, latex_mode):
+        chart = self._chart
+        dimension = chart.dimension()
+        if latex_mode:
+            label, product = chart._basis_latex, r" \otimes "
+        else:
+            label, product = chart._basis_label, " ⊗ "
+        pieces = []
+        for j in range(dimension):
+            for k in range(dimension):
+                coefficient = self._components[j, k]
+                if _is_zero(coefficient, chart):
+                    continue
+                first, second = label(j), label(dimension + k)
+                tensor = (
+                    f"{first}{product}{second} + {second}{product}{first}"
+                )
+                text = _format_coefficient(coefficient, chart, latex_mode=latex_mode)
+                if (coefficient - 1).is_trivial_zero():
+                    pieces.append(tensor)
+                    continue
+                if latex_mode:
+                    if (coefficient + 1).is_trivial_zero():
+                        text = "-"
+                    elif coefficient.operator() == add_vararg:
+                        text = rf"\left({text}\right)"
+                    pieces.append(rf"{text}\left({tensor}\right)")
+                elif (coefficient + 1).is_trivial_zero():
+                    pieces.append(f"-({tensor})")
+                elif not coefficient.variables() and coefficient in QQ:
+                    pieces.append(f"{text} ({tensor})")
+                else:
+                    pieces.append(f"({text}) ({tensor})")
+        if not pieces:
+            return "0"
+        return " + ".join(pieces).replace("+ -", "- ")

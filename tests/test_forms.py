@@ -2,21 +2,30 @@ import pytest
 
 from sage.all import I, SR, det, exp, latex, matrix, sqrt, var
 
-from sage_kahler.all import ComplexChart, abs2, bar, d, dbar, ddbar, partial, wedge
+from sage_kahler.all import (
+    ComplexChart,
+    abs2,
+    bar,
+    d,
+    dbar,
+    ddbar,
+    partial,
+    wedge,
+)
 
 
 def test_coordinate_basis_forms_have_the_expected_types():
     chart = ComplexChart(2, names=("a", "b"))
 
-    assert chart.dz(0).bidegree() == (1, 0)
-    assert chart.dzbar(1).bidegree() == (0, 1)
-    assert wedge(chart.dz(0), chart.dzbar(1)).bidegree() == (1, 1)
+    assert chart.dz(1).bidegree() == (1, 0)
+    assert chart.dzbar(2).bidegree() == (0, 1)
+    assert wedge(chart.dz(1), chart.dzbar(2)).bidegree() == (1, 1)
 
 
 def test_wedge_product_is_antisymmetric():
     chart = ComplexChart(2, names=("c", "e"))
-    dc = chart.dz(0)
-    de = chart.dz(1)
+    dc = chart.dz(1)
+    de = chart.dz(2)
 
     assert wedge(dc, dc) == 0
     assert wedge(dc, de) == -wedge(de, dc)
@@ -26,8 +35,8 @@ def test_partial_and_dbar_differentiate_independent_variables():
     chart = ComplexChart(1, names=("p",))
     (p,) = chart.coordinates()
 
-    assert partial(p * bar(p)) == bar(p) * chart.dz(0)
-    assert dbar(p * bar(p)) == p * chart.dzbar(0)
+    assert partial(p * bar(p)) == bar(p) * chart.dz(1)
+    assert dbar(p * bar(p)) == p * chart.dzbar(1)
     assert d(p * bar(p)) == partial(p * bar(p)) + dbar(p * bar(p))
 
 
@@ -46,10 +55,10 @@ def test_ddbar_and_form_conjugation():
     chart = ComplexChart(1, names=("q",))
     (q,) = chart.coordinates()
 
-    assert ddbar(q * bar(q)) == wedge(chart.dz(0), chart.dzbar(0))
-    assert bar(chart.dz(0)) == chart.dzbar(0)
-    assert bar(wedge(chart.dz(0), chart.dzbar(0))) == -wedge(
-        chart.dz(0), chart.dzbar(0)
+    assert ddbar(q * bar(q)) == wedge(chart.dz(1), chart.dzbar(1))
+    assert bar(chart.dz(1)) == chart.dzbar(1)
+    assert bar(wedge(chart.dz(1), chart.dzbar(1))) == -wedge(
+        chart.dz(1), chart.dzbar(1)
     )
 
 
@@ -57,7 +66,7 @@ def test_factor_simplifies_form_coefficients_and_ddbar_factors_automatically():
     chart = ComplexChart(1, names=("t",))
     (t,) = chart.coordinates()
     expected = (1 / (4 * sqrt(abs2(t)))) * wedge(
-        chart.dz(0), chart.dzbar(0)
+        chart.dz(1), chart.dzbar(1)
     )
 
     unfactored = partial(dbar(sqrt(abs2(t))))
@@ -79,10 +88,10 @@ def test_symbolic_radial_power_has_readable_output_and_raw_form():
     assert result.conditions() == ("u != 0",)
     assert "|u|^(alpha - 2)" in repr(result)
     assert "u_bar" not in repr(result.raw())
-    assert "u_bar" in str(result.raw().terms()[(0, 1)])
+    assert "u_bar" in str(result.raw().terms()[(1, 2)])
     assert result == (
         exponent**2 / 4 * abs2(u) ** (exponent / 2 - 1)
-    ) * wedge(chart.dz(0), chart.dzbar(0))
+    ) * wedge(chart.dz(1), chart.dzbar(1))
 
 
 def test_smooth_radial_polynomial_does_not_exclude_the_origin():
@@ -115,9 +124,9 @@ def test_wirtinger_derivatives_agree_with_real_coordinate_derivatives():
     expression = (1 + abs2(h)) ** 3
     real_expression = chart.to_real(expression)
 
-    partial_coefficient = partial(expression).terms()[(0,)]
-    dbar_coefficient = dbar(expression).terms()[(1,)]
-    ddbar_coefficient = ddbar(expression).terms()[(0, 1)]
+    partial_coefficient = partial(expression).terms()[(1,)]
+    dbar_coefficient = dbar(expression).terms()[(2,)]
+    ddbar_coefficient = ddbar(expression).terms()[(1, 2)]
 
     expected_partial = (real_expression.diff(xh) - I * real_expression.diff(yh)) / 2
     expected_dbar = (real_expression.diff(xh) + I * real_expression.diff(yh)) / 2
@@ -135,10 +144,10 @@ def test_absolute_value_has_both_wirtinger_derivatives():
     (z,) = chart.coordinates()
     radius = sqrt(abs2(z))
 
-    assert partial(abs(z)) == (bar(z) / (2 * radius)) * chart.dz(0)
-    assert dbar(abs(z)) == (z / (2 * radius)) * chart.dzbar(0)
+    assert partial(abs(z)) == (bar(z) / (2 * radius)) * chart.dz(1)
+    assert dbar(abs(z)) == (z / (2 * radius)) * chart.dzbar(1)
     result = ddbar(abs(z))
-    assert result == (1 / (4 * radius)) * wedge(chart.dz(0), chart.dzbar(0))
+    assert result == (1 / (4 * radius)) * wedge(chart.dz(1), chart.dzbar(1))
     assert result.conditions() == ("norm_z != 0",)
     assert "1/4/|norm_z|" in repr(result)
     assert partial(dbar(abs(z))) == -dbar(partial(abs(z)))
@@ -149,13 +158,13 @@ def test_absolute_value_powers_and_nested_expressions():
     (z,) = chart.coordinates()
     alpha = var("norm_alpha")
 
-    assert ddbar(abs(z)**2) == wedge(chart.dz(0), chart.dzbar(0))
+    assert ddbar(abs(z)**2) == wedge(chart.dz(1), chart.dzbar(1))
     assert ddbar(abs(z)**2).conditions() == ()
     assert ddbar(abs(z)**alpha) == ddbar(abs2(z)**(alpha / 2))
     assert ddbar(exp(abs(z))) == ddbar(exp(sqrt(abs2(z))))
     assert ddbar(abs(z + I)) == (
         1 / (4 * sqrt(abs2(z + I)))
-    ) * wedge(chart.dz(0), chart.dzbar(0))
+    ) * wedge(chart.dz(1), chart.dzbar(1))
     assert dbar(abs(abs(z) + z)) == dbar(sqrt(abs2(sqrt(abs2(z)) + z)))
 
 
@@ -165,8 +174,8 @@ def test_absolute_values_in_multivariable_form_coefficients():
     expression = abs(u + I*v)
     formal = sqrt(abs2(u + I*v))
 
-    assert dbar(expression * chart.dz(0)) == dbar(formal * chart.dz(0))
-    assert partial(expression * chart.dzbar(1)) == partial(formal * chart.dzbar(1))
+    assert dbar(expression * chart.dz(1)) == dbar(formal * chart.dz(1))
+    assert partial(expression * chart.dzbar(2)) == partial(formal * chart.dzbar(2))
     assert d(d(expression)) == 0
 
 
@@ -183,7 +192,7 @@ def test_display_normalizes_mixed_coefficients_without_changing_them():
         assert "sqrt" not in text
         assert "internal_conj" not in repr(value)
     assert form.terms() == before
-    assert form == (bar(z) / (2 * sqrt(abs2(z)))) * chart.dz(0)
+    assert form == (bar(z) / (2 * sqrt(abs2(z)))) * chart.dz(1)
     assert partial(dbar(abs(z))) == -dbar(partial(abs(z)))
 
 
@@ -242,10 +251,10 @@ def test_determinant_of_variable_and_degenerate_metrics():
 def test_coefficient_matrix_rejects_other_form_types():
     chart = ComplexChart(2, names=("type_z", "type_w"))
     forms = (
-        chart.dz(0),
-        wedge(chart.dz(0), chart.dz(1)),
-        wedge(chart.dzbar(0), chart.dzbar(1)),
-        wedge(chart.dz(0), chart.dzbar(0)) + 1,
+        chart.dz(1),
+        wedge(chart.dz(1), chart.dz(2)),
+        wedge(chart.dzbar(1), chart.dzbar(2)),
+        wedge(chart.dz(1), chart.dzbar(1)) + 1,
     )
     for form in forms:
         with pytest.raises(ValueError, match=r"\(1, 1\)"):
@@ -283,10 +292,10 @@ def test_rational_coefficients_are_printed_without_parentheses():
     chart = ComplexChart(2, names=("print_z", "print_w"))
     z, w = chart.coordinates()
 
-    assert repr(2 * chart.dz(0)) == "2 dprint_z"
-    assert repr(-chart.dz(0) * (SR(1) / 2) + chart.dz(1)) == "-1/2 dprint_z + dprint_w"
-    assert repr((1 + 2*I) * chart.dz(0)) == "(2*I + 1) dprint_z"
-    assert repr(z * chart.dz(1)) == "(print_z) dprint_w"
+    assert repr(2 * chart.dz(1)) == "2 dprint_z"
+    assert repr(-chart.dz(1) * (SR(1) / 2) + chart.dz(2)) == "-1/2 dprint_z + dprint_w"
+    assert repr((1 + 2*I) * chart.dz(1)) == "(2*I + 1) dprint_z"
+    assert repr(z * chart.dz(2)) == "(print_z) dprint_w"
 
 
 def test_products_of_norms_cancel_in_coefficients():
@@ -297,7 +306,7 @@ def test_products_of_norms_cancel_in_coefficients():
 
     assert chart.display(vanishing).terms() == {}
     assert chart.display(vanishing) == 0
-    assert sqrt(abs2(z)) * chart.dz(0) != sqrt(abs2(w)) * chart.dz(0)
+    assert sqrt(abs2(z)) * chart.dz(1) != sqrt(abs2(w)) * chart.dz(1)
 
 
 def test_display_and_simplification_do_not_leak_temporary_variables():
@@ -312,3 +321,32 @@ def test_display_and_simplification_do_not_leak_temporary_variables():
         ddbar(abs(z)**2 + abs(w)**2)
 
     assert (len(assumptions()), len(SR.symbols)) == before
+
+
+def test_forms_evaluate_at_points_with_conjugate_coordinates():
+    chart = ComplexChart(2, names=("point_z", "point_w"))
+    z, w = chart.coordinates()
+    form = ddbar(abs2(z) * abs2(w))
+    dz, dw = chart.dz(1), chart.dz(2)
+    dzbar, dwbar = chart.dzbar(1), chart.dzbar(2)
+
+    assert form(point_z=1, point_w=2) == (
+        4 * wedge(dz, dzbar) + 2 * wedge(dz, dwbar)
+        + 2 * wedge(dw, dzbar) + wedge(dw, dwbar)
+    )
+    assert form({z: I, w: 0}) == wedge(dw, dwbar)
+    assert form.subs(point_w=0) == abs2(z) * wedge(dw, dwbar)
+    with pytest.raises(ValueError):
+        form(no_such_variable=1)
+
+
+def test_forms_evaluate_on_vector_fields():
+    chart = ComplexChart(2, names=("pair_z", "pair_w"))
+    z, w = chart.coordinates()
+    omega = I * wedge(chart.dz(1), chart.dzbar(1))
+
+    assert omega(chart.d_dz(1), chart.d_dzbar(1)) == I
+    assert omega(chart.d_dzbar(1), chart.d_dz(1)) == -I
+    assert chart.dz(2)(w * chart.d_dz(2)) == w
+    with pytest.raises(ValueError):
+        omega(chart.d_dz(1))

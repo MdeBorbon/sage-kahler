@@ -39,9 +39,18 @@ z, w = X.coordinates()
 
 ddbar(abs(z)**2)           # dz ∧ dbar(z)
 ddbar(abs(z))              # (1/4/|z|) dz ∧ dbar(z)
-X.dz(0).wedge(X.dzbar(1))  # dz ∧ dbar(w)
+X.dz(1).wedge(X.dzbar(2))  # dz ∧ dbar(w)
 X.to_real(abs(z)**2)       # x1^2 + y1^2
+X.frame()                  # Coordinate frame (∂/∂z, ∂/∂w)
+X.coframe()[2]             # dw
 ```
+
+- Indices start at 1, as with `Manifold(..., start_index=1)` in SageManifolds:
+  `X.dz(1)`, `X.d_dzbar(2)`, `X.frame()[1]`, `g[1, 2]`, `C.christoffel(1, 1, 2)`.
+  Pass `start_index=0` to `ComplexChart` for Sage's default. `X.frame()` and
+  `X.coframe()` hold $\partial/\partial z^j$ and $dz^j$; `X.conjugate_frame()` and
+  `X.conjugate_coframe()` hold their conjugates. Sage matrices such as
+  `g.matrix()` keep Sage's indexing from 0.
 
 - `z` and `bar(z)` are independent symbols. Before differentiating, `abs(f)`
   is rewritten as `sqrt(f*bar(f))`.
@@ -52,6 +61,8 @@ X.to_real(abs(z)**2)       # x1^2 + y1^2
 - `form1 == form2` is `True` only when the difference is proven to vanish.
 - `%display latex` shows results in mathematical notation.
 - Declare real parameters with `var("beta", domain="real")`.
+- `omega(z=0, w=0)` (or `omega.subs({z: 0})`) evaluates the coefficients, setting
+  `bar(z)` to the conjugate value. On vector fields, `omega(X, Y)` evaluates the form.
 
 ## Kähler potentials
 
@@ -74,7 +85,8 @@ det(ddbar(sqrt(s**2 + 1) + log(s / (sqrt(s**2 + 1) + 1))))   # 1
 
 ## Hermitian metrics
 
-`HermitianMetric` has components $g_{j\bar k} = g(\partial_j, \partial_{\bar k})$
+`HermitianMetric` has components $g_{j\bar k} = g(\partial_j, \partial_{\bar k})$,
+so that $g = g_{j\bar k}(dz^j\otimes d\bar z^k + d\bar z^k\otimes dz^j)$ (as it is displayed),
 and form $\omega = \sqrt{-1}\,g_{j\bar k}\,dz^j\wedge d\bar z^k$. A potential
 gives $\omega = \sqrt{-1}\partial\bar\partial\varphi$.
 
@@ -92,6 +104,8 @@ or by a form, `HermitianMetric.from_form(omega)`. Other methods:
 - `is_positive_definite_at({z: ..., w: ...})`, a numerical check at a point
 - `trace(alpha)`, `laplacian(f)` $= g^{k\bar l}\partial_k\partial_{\bar l}f$
 - `ricci_matrix()` $= -\partial_i\partial_{\bar j}\log\det g$, `ricci_form()`, `scalar_curvature()`
+- `g(z=0, w=0)` (or `g.subs({z: 0})`), the metric with its coefficients evaluated;
+  `bar(z)` is set to the conjugate value
 - `g(X, Y)` on vector fields, and `grad10(f)` $= g^{j\bar k}\partial_{\bar k}f\,\partial_j$
 
 ## Vector fields
@@ -100,17 +114,18 @@ or by a form, `HermitianMetric.from_form(omega)`. Other methods:
 $\partial/\partial z^j, \partial/\partial\bar z^j$:
 
 ```python
-v = z * X.d_dz(0) + bar(w) * X.d_dzbar(1)
+v = z * X.d_dz(1) + bar(w) * X.d_dzbar(2)
 v(abs(z)**2)                                # |z|^2
 bar(v)                                      # (w) ∂/∂w + (bar(z)) ∂/∂bar(z)
-(z * X.d_dz(0)).bracket(z**2 * X.d_dz(1))   # (2*z^2) ∂/∂w
-(z * X.d_dz(0)).is_holomorphic()            # True
-g(X.d_dz(0), X.d_dzbar(1))                  # equals g[0, 1]
+(z * X.d_dz(1)).bracket(z**2 * X.d_dz(2))   # (2*z^2) ∂/∂w
+(z * X.d_dz(1)).is_holomorphic()            # True
+g(X.d_dz(1), X.d_dzbar(2))                  # equals g[1, 2]
 g.grad10(abs(z)**2 / (1 + s))               # (z) ∂/∂z
 ```
 
 Also available: `holomorphic_part()`, `vector_type()`, `is_real()`, and
-`contract(form)` for the interior product.
+`contract(form)` for the interior product. Forms evaluate on vector fields as in
+SageManifolds, `wedge(X.dz(1), X.dzbar(1))(X.d_dz(1), X.d_dzbar(1)) == 1`.
 
 ## Chern connection and curvature
 
@@ -120,8 +135,8 @@ $\nabla_{\bar j}\partial_k = 0$. It is the Levi-Civita connection exactly when
 
 ```python
 C = g.chern_connection()
-C.christoffel(0, 0, 0)     # -2*bar(z)/(|z|^2 + |w|^2 + 1)
-C.curvature(0, 0, 0, 0)    # 2*(|w|^2 + 1)^2/(|z|^2 + |w|^2 + 1)^4
+C.christoffel(1, 1, 1)     # -2*bar(z)/(|z|^2 + |w|^2 + 1)
+C.curvature(1, 1, 1, 1)    # 2*(|w|^2 + 1)^2/(|z|^2 + |w|^2 + 1)^4
 C.is_torsion_free()        # True
 ```
 

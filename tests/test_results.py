@@ -56,7 +56,7 @@ def test_scalar_computations_preserve_formal_derivatives_and_common_display():
     assert log(scalar) == log(raw)
     assert ddbar(log(scalar)) == ddbar(log(raw))
     assert ddbar(scalar) == ddbar(raw)
-    assert scalar * chart.dz(0) == raw * chart.dz(0)
+    assert scalar * chart.dz(1) == raw * chart.dz(1)
     assert SR(scalar).parent() is SR
 
 

@@ -104,17 +104,67 @@ def _wedge_basis(left, right):
     return sign, tuple(sorted(left + right))
 
 
-class DifferentialForm:
-    """A sparse complex differential form on a :class:`ComplexChart`."""
+def _point_substitutions(chart, coefficients, values, names):
+    """Return the substitution dict for ``subs(values, **names)``.
 
-    def __init__(
-        self,
-        chart,
-        terms=None,
-        *,
-        conditions=(),
-        radial_indices=(),
-        raw_terms=None,
+    Keys are chart coordinates or parameters, as Sage variables in ``values``
+    or by name in ``names``. Each conjugate coordinate ``zbar`` gets ``bar``
+    of the value given for ``z``, unless it is given a value itself.
+    """
+    substitutions = dict(values or {})
+    if names:
+        variables = {
+            str(variable): variable
+            for variable in (
+                chart.coordinates()
+                + chart.conjugate_coordinates()
+                + tuple(
+                    variable
+                    for coefficient in coefficients
+                    for variable in SR(coefficient).variables()
+                )
+            )
+        }
+        for name, value in names.items():
+            if name not in variables:
+                raise ValueError(f"there is no variable named {name!r}")
+            substitutions[variables[name]] = value
+    substitutions = {SR(key): SR(value) for key, value in substitutions.items()}
+    for coordinate, conjugate in zip(
+        chart.coordinates(), chart.conjugate_coordinates()
+    ):
+        if coordinate in substitutions:
+            substitutions.setdefault(conjugate, bar(substitutions[coordinate]))
+    return substitutions
+
+
+class DifferentialForm:
+    """A sparse complex differential form on a :class:`ComplexChart`.
+
+    ``terms`` maps sorted tuples of combined indices to coefficients, with
+    indices from the chart's ``start_index``: for ``n = 2`` and
+    ``start_index=1``, ``{(1, 3): f}`` is ``f dz^1 ∧ dzbar^1``.
+    """
+
+    def __init__(self, chart, terms=None, *, conditions=()):
+        self._setup(
+            chart,
+            {
+                tuple(chart._combined_position(index) for index in basis): coefficient
+                for basis, coefficient in (terms or {}).items()
+            },
+            conditions=conditions,
+        )
+
+    @classmethod
+    def _internal(cls, chart, terms=None, **options):
+        """Construct from 0-based combined indices, as the library stores them."""
+        form = cls.__new__(cls)
+        form._setup(chart, terms, **options)
+        return form
+
+    def _setup(
+        self, chart, terms, *, conditions=(), radial_indices=(), raw_terms=None
     ):
         self._chart = chart
         combined = {}
@@ -139,8 +189,15 @@ class DifferentialForm:
         return self._chart
 
     def terms(self):
-        """Return a copy of the sparse basis-to-coefficient dictionary."""
-        return dict(self._terms)
+        """Return a copy of the sparse basis-to-coefficient dictionary.
+
+        Basis indices are combined indices from the chart's start index.
+        """
+        start = self._chart.start_index()
+        return {
+            tuple(start + index for index in basis): coefficient
+            for basis, coefficient in self._terms.items()
+        }
 
     def coefficient_matrix(self, *, display=None):
         """Return the matrix of a (1, 1) form in ``dz_i wedge dbar(z_j)``.
@@ -195,14 +252,14 @@ class DifferentialForm:
 
     def raw(self):
         """Return the form before assumption-aware radial simplification."""
-        return DifferentialForm(
+        return DifferentialForm._internal(
             self._chart,
             self._terms if self._raw_terms is None else self._raw_terms,
         )
 
     def map_coefficients(self, function):
         """Return a form obtained by applying ``function`` to each coefficient."""
-        return DifferentialForm(
+        return DifferentialForm._internal(
             self._chart,
             {
                 basis: function(coefficient)
@@ -211,6 +268,59 @@ class DifferentialForm:
             conditions=self._conditions,
             radial_indices=self._radial_indices,
         )
+
+    def __call__(self, *args, **values):
+        """Evaluate on vector fields, ``omega(X, Y)``, or at a point, ``omega(z=0)``.
+
+        With vector fields ``X_1, ..., X_k`` for a ``k``-form this is
+        ``omega(X_1, ..., X_k)``, so ``(dz ∧ dzbar)(d/dz, d/dzbar) = 1``, as in
+        SageManifolds. With keyword arguments or a dict, this is ``subs``.
+        """
+        from .vectors import VectorField
+
+        if args and all(isinstance(arg, VectorField) for arg in args):
+            if values:
+                raise TypeError("cannot mix vector fields and values")
+            return self.evaluate(*args)
+        if len(args) <= 1:
+            return self.subs(*args, **values)
+        raise TypeError("expected vector fields or values for the variables")
+
+    def evaluate(self, *vectors):
+        """Return ``omega(X_1, ..., X_k)`` as a function, for a ``k``-form."""
+        from .results import ChartExpression
+
+        if self._terms and self.degree() != len(vectors):
+            raise ValueError(
+                f"a {self.degree()}-form takes {self.degree()} vector fields"
+            )
+        form = self
+        for vector in vectors:
+            form = vector.contract(form)
+        value = form._terms.get((), SR.zero())
+        return ChartExpression(SR, _simplify_scalar(value, self._chart), self._chart)
+
+    def subs(self, values=None, **names):
+        """Return the form with the given values substituted in its coefficients.
+
+        ``omega.subs(z=0, w=0)``, ``omega.subs({z: 0})`` and ``omega(z=0)``
+        agree; ``bar(z)`` is set to the conjugate of the value for ``z``.
+        """
+        substitutions = _point_substitutions(
+            self._chart, self._terms.values(), values, names
+        )
+        return DifferentialForm._internal(
+            self._chart,
+            {
+                basis: _simplify_scalar(
+                    coefficient.subs(substitutions), self._chart
+                )
+                for basis, coefficient in self._terms.items()
+            },
+            conditions=self._conditions,
+        )
+
+    substitute = subs
 
     def factor(self):
         """Return the form with every symbolic coefficient factored by Sage."""
@@ -235,12 +345,12 @@ class DifferentialForm:
             if condition not in conditions:
                 conditions.append(condition)
 
-        return DifferentialForm(
+        return DifferentialForm._internal(
             self._chart,
             terms,
             conditions=conditions,
             radial_indices=radial_indices,
-            raw_terms=self.raw().terms(),
+            raw_terms=self.raw()._terms,
         )
 
     def degree(self):
@@ -277,7 +387,7 @@ class DifferentialForm:
                     terms[basis] = terms.get(basis, SR.zero()) + (
                         sign * left_coefficient * right_coefficient
                     )
-        return DifferentialForm(
+        return DifferentialForm._internal(
             self._chart,
             terms,
             conditions=self._conditions + other._conditions,
@@ -289,7 +399,7 @@ class DifferentialForm:
             if other.chart != self._chart:
                 raise ValueError("differential forms must belong to the same chart")
             return other
-        return DifferentialForm(self._chart, {(): SR(other)})
+        return DifferentialForm._internal(self._chart, {(): SR(other)})
 
     def _formal_conjugate_(self):
         dimension = self._chart.dimension()
@@ -309,7 +419,7 @@ class DifferentialForm:
             terms[canonical_basis] = terms.get(canonical_basis, SR.zero()) + (
                 sign * bar(coefficient)
             )
-        return DifferentialForm(
+        return DifferentialForm._internal(
             self._chart,
             terms,
             conditions=self._conditions,
@@ -318,10 +428,10 @@ class DifferentialForm:
 
     def __add__(self, other):
         other = self._coerce(other)
-        terms = self.terms()
+        terms = dict(self._terms)
         for basis, coefficient in other._terms.items():
             terms[basis] = terms.get(basis, SR.zero()) + coefficient
-        return DifferentialForm(
+        return DifferentialForm._internal(
             self._chart,
             terms,
             conditions=self._conditions + other._conditions,
@@ -332,7 +442,7 @@ class DifferentialForm:
         return self + other
 
     def __neg__(self):
-        return DifferentialForm(
+        return DifferentialForm._internal(
             self._chart,
             {basis: -coefficient for basis, coefficient in self._terms.items()},
             conditions=self._conditions,
@@ -348,7 +458,7 @@ class DifferentialForm:
     def __mul__(self, scalar):
         if isinstance(scalar, DifferentialForm):
             return NotImplemented
-        return DifferentialForm(
+        return DifferentialForm._internal(
             self._chart,
             {
                 basis: coefficient * SR(scalar)
@@ -804,7 +914,7 @@ def _format_coefficient_using(new_variable, expression, chart, latex_mode):
 
 def basis_form(chart, index):
     """Construct a coordinate basis one-form by its combined basis index."""
-    return DifferentialForm(chart, {(index,): SR.one()})
+    return DifferentialForm._internal(chart, {(index,): SR.one()})
 
 
 def wedge(left, right):
@@ -823,7 +933,7 @@ def _as_form(value, chart):
         return value
     if chart is None:
         chart = chart_for_expression(value)
-    return DifferentialForm(chart, {(): SR(value)})
+    return DifferentialForm._internal(chart, {(): SR(value)})
 
 
 def _formalize_absolute_values(expression, chart):
@@ -869,7 +979,7 @@ def _differentiate(value, kind, chart=None):
             sign, new_basis = _wedge_basis((offset + index,), basis)
             if sign:
                 terms[new_basis] = terms.get(new_basis, SR.zero()) + sign * derivative
-    return DifferentialForm(
+    return DifferentialForm._internal(
         chart,
         terms,
         conditions=form._conditions,
@@ -963,7 +1073,7 @@ def _radial_hessian_using(rho, form, radius_squared):
             coefficient = (second * zb * z + (first if i == j else 0)).factor()
             terms[basis] = coefficient.subs({rho: radius_squared})
             raw_terms[basis] = second_raw * zb * z + (first_raw if i == j else 0)
-    return DifferentialForm(chart, terms, conditions=conditions, raw_terms=raw_terms)
+    return DifferentialForm._internal(chart, terms, conditions=conditions, raw_terms=raw_terms)
 
 
 def ddbar(value, chart=None):

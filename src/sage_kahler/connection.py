@@ -110,20 +110,27 @@ class ChernConnection:
             }
         return self._gamma
 
+    def _positions(self, *indices):
+        return tuple(self._chart._position(index) for index in indices)
+
+    def _labels(self, *positions):
+        return tuple(self._chart.start_index() + p for p in positions)
+
     def christoffel(self, i, j, k):
         """Return ``Gamma^i_{jk} = g^{i lbar} d_j g_{k lbar}``."""
-        return self._wrap(self._christoffel_table()[i, j, k])
+        return self._wrap(self._christoffel_table()[self._positions(i, j, k)])
 
     def christoffel_symbols(self):
         """Return the nonzero symbols as ``{(i, j, k): Gamma^i_{jk}}``."""
         return {
-            key: self._wrap(value)
+            self._labels(*key): self._wrap(value)
             for key, value in self._christoffel_table().items()
             if not _is_zero(value, self._chart)
         }
 
     def torsion(self, i, j, k):
         """Return ``T^i_{jk} = Gamma^i_{jk} - Gamma^i_{kj}``."""
+        i, j, k = self._positions(i, j, k)
         table = self._christoffel_table()
         return self._wrap(self._simplify(table[i, j, k] - table[i, k, j]))
 
@@ -163,13 +170,14 @@ class ChernConnection:
         components = {}
         for offset, table in ((0, gamma), (dimension, self._gamma_bar)):
             for i in range(dimension):
-                value = direction._apply(vector[offset + i]) + sum(
-                    direction[offset + j] * table[i, j, k] * vector[offset + k]
+                value = direction._apply(vector._component(offset + i)) + sum(
+                    direction._component(offset + j) * table[i, j, k]
+                    * vector._component(offset + k)
                     for j in range(dimension)
                     for k in range(dimension)
                 )
                 components[offset + i] = self._simplify(value)
-        return VectorField(
+        return VectorField._internal(
             self._chart,
             components,
             conditions=direction.conditions() + vector.conditions(),
@@ -185,7 +193,8 @@ class ChernConnection:
         k = index - offset
         return {
             offset + p: -sum(
-                direction[offset + j] * table[k, j, p] for j in range(dimension)
+                direction._component(offset + j) * table[k, j, p]
+                for j in range(dimension)
             )
             for p in range(dimension)
         }
@@ -194,7 +203,7 @@ class ChernConnection:
         if form.chart != self._chart:
             raise ValueError("the form belongs to a different chart")
         terms = {}
-        for basis, coefficient in form.terms().items():
+        for basis, coefficient in form._terms.items():
             terms[basis] = terms.get(basis, SR.zero()) + direction._apply(coefficient)
             for position, index in enumerate(basis):
                 for new_index, factor in self._derivative_of_basis_form(
@@ -207,7 +216,7 @@ class ChernConnection:
                         terms[new_basis] = terms.get(new_basis, SR.zero()) + (
                             sign * coefficient * factor
                         )
-        return DifferentialForm(
+        return DifferentialForm._internal(
             self._chart,
             {basis: self._simplify(value) for basis, value in terms.items()},
             conditions=direction.conditions() + form.conditions(),
@@ -215,6 +224,10 @@ class ChernConnection:
 
     def curvature(self, i, j, k, l):
         """Return ``R_{i jbar k lbar}``."""
+        return self._wrap(self._curvature_component(*self._positions(i, j, k, l)))
+
+    def _curvature_component(self, i, j, k, l):
+        """Return ``R_{i jbar k lbar}`` at 0-based positions, unwrapped."""
         key = (i, j, k, l)
         if key not in self._curvature:
             components = self._metric._components
@@ -229,10 +242,11 @@ class ChernConnection:
                 for p in range(dimension)
                 for q in range(dimension)
             ))
-        return self._wrap(self._curvature[key])
+        return self._curvature[key]
 
     def curvature_endomorphism(self, i, j, k, l):
         """Return ``R_i^j_{k lbar} = -d_lbar Gamma^j_{ki}``."""
+        i, j, k, l = self._positions(i, j, k, l)
         gamma = self._christoffel_table()[j, k, i]
         conjugate = self._chart.conjugate_coordinates()[l]
         return self._wrap(self._simplify(-gamma.diff(conjugate)))
@@ -245,9 +259,9 @@ class ChernConnection:
             for j in range(dimension):
                 for k in range(dimension):
                     for l in range(dimension):
-                        value = self.curvature(i, j, k, l)
-                        if not _is_zero(value.raw(), self._chart):
-                            result[i, j, k, l] = value
+                        value = self._curvature_component(i, j, k, l)
+                        if not _is_zero(value, self._chart):
+                            result[self._labels(i, j, k, l)] = self._wrap(value)
         return result
 
     def curvature_operator(self, first, second, vector):
@@ -282,13 +296,13 @@ class ChernConnection:
         def entry(a, b):
             if endomorphism:
                 terms = (
-                    inverse[i, j] * self.curvature(i, j, a, b).raw()
+                    inverse[i, j] * self._curvature_component(i, j, a, b)
                     for i in range(dimension)
                     for j in range(dimension)
                 )
             else:
                 terms = (
-                    inverse[k, l] * self.curvature(a, b, k, l).raw()
+                    inverse[k, l] * self._curvature_component(a, b, k, l)
                     for k in range(dimension)
                     for l in range(dimension)
                 )

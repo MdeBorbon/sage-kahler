@@ -55,7 +55,57 @@ def test_recreated_chart_accepts_forms_from_the_earlier_chart():
     assert second == first
     assert hash(second) == hash(first)
     assert form + ddbar(abs2(w)) == (
-        second.dz(0).wedge(second.dzbar(0)) + second.dz(1).wedge(second.dzbar(1))
+        second.dz(1).wedge(second.dzbar(1)) + second.dz(2).wedge(second.dzbar(2))
     )
     # Coordinate order defines the basis, so a reordered chart differs.
     assert second != ComplexChart(2, names=("rerun_w", "rerun_z"))
+
+
+def test_indices_start_at_one_by_default():
+    chart = ComplexChart(2, names=("one_z", "one_w"))
+    z, w = chart.coordinates()
+
+    assert chart.start_index() == 1
+    assert list(chart.irange()) == [1, 2]
+    assert chart.d_dz(1)(z) == 1
+    assert chart.dzbar(2)(chart.d_dzbar(2)) == 1
+    for method in (chart.dz, chart.dzbar, chart.d_dz, chart.d_dzbar):
+        with pytest.raises(IndexError):
+            method(0)
+        with pytest.raises(IndexError):
+            method(3)
+    assert tuple(map(str, ComplexChart(2).coordinates())) == ("z1", "z2")
+
+
+def test_frames_and_coframes_follow_sage_manifolds():
+    chart = ComplexChart(2, names=("frame_z", "frame_w"))
+    frame, coframe = chart.frame(), chart.coframe()
+
+    assert frame[1] == chart.d_dz(1)
+    assert coframe[2] == chart.dz(2)
+    assert chart.conjugate_frame()[:] == (chart.d_dzbar(1), chart.d_dzbar(2))
+    assert chart.conjugate_coframe()[:] == (chart.dzbar(1), chart.dzbar(2))
+    assert len(frame) == 2 and list(frame) == list(frame[:])
+    assert frame[2:] == (chart.d_dz(2),)
+    for i in chart.irange():
+        for j in chart.irange():
+            assert coframe[i](frame[j]) == (1 if i == j else 0)
+    with pytest.raises(IndexError):
+        frame[0]
+    assert repr(frame) == "Coordinate frame (∂/∂frame_z, ∂/∂frame_w)"
+    assert repr(coframe) == "Coordinate coframe (dframe_z, dframe_w)"
+
+
+def test_start_index_zero_matches_the_sage_manifolds_default():
+    chart = ComplexChart(2, names=("zero_z", "zero_w"), start_index=0)
+
+    assert chart.frame()[0] == chart.d_dz(0)
+    assert chart.dz(1).terms() == {(1,): 1}
+    assert chart.dzbar(0).terms() == {(2,): 1}
+    with pytest.raises(IndexError):
+        chart.dz(2)
+    assert chart != ComplexChart(2, names=("zero_z", "zero_w"))
+    assert tuple(map(str, ComplexChart(2, start_index=0).coordinates())) == (
+        "z0",
+        "z1",
+    )

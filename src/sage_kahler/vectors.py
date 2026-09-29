@@ -39,10 +39,15 @@ def _raw(value):
 
 
 class VectorField:
-    """A sparse complex vector field ``X = X^a d/dx^a`` on a chart."""
+    """A sparse complex vector field ``X = X^a d/dx^a`` on a chart.
+
+    ``components`` is a list of all ``2n`` components, along
+    ``d/dz^1, ..., d/dz^n, d/dzbar^1, ..., d/dzbar^n``, or a dict keyed by
+    combined indices from the chart's ``start_index``: for ``n = 2`` and
+    ``start_index=1``, ``{1: f, 3: h}`` is ``f d/dz^1 + h d/dzbar^1``.
+    """
 
     def __init__(self, chart, components=None, *, conditions=()):
-        self._chart = chart
         dimension = 2 * chart.dimension()
         if components is None:
             components = {}
@@ -51,6 +56,23 @@ class VectorField:
             if len(components) != dimension:
                 raise ValueError(f"expected {dimension} components")
             components = dict(enumerate(components))
+        else:
+            components = {
+                chart._combined_position(index): coefficient
+                for index, coefficient in components.items()
+            }
+        self._setup(chart, components, conditions=conditions)
+
+    @classmethod
+    def _internal(cls, chart, components=None, *, conditions=()):
+        """Construct from 0-based combined indices, as the library stores them."""
+        vector = cls.__new__(cls)
+        vector._setup(chart, components or {}, conditions=conditions)
+        return vector
+
+    def _setup(self, chart, components, *, conditions):
+        self._chart = chart
+        dimension = 2 * chart.dimension()
         combined = {}
         for index, coefficient in components.items():
             if not 0 <= index < dimension:
@@ -68,30 +90,40 @@ class VectorField:
         return self._chart
 
     def components(self):
-        """Return a copy of the sparse index-to-coefficient dictionary."""
-        return dict(self._components)
+        """Return a copy of the sparse dictionary, keyed by combined indices."""
+        start = self._chart.start_index()
+        return {
+            start + index: coefficient
+            for index, coefficient in self._components.items()
+        }
 
     def __getitem__(self, index):
-        """Return the component ``X^a`` for a combined index ``a``."""
-        if not 0 <= index < 2 * self._chart.dimension():
-            raise IndexError("vector index is outside the chart")
-        return self._components.get(index, SR.zero())
+        """Return the component ``X^a`` for a combined index ``a``.
+
+        With ``start_index=1``, ``X[j]`` is the ``d/dz^j`` component and
+        ``X[n + j]`` the ``d/dzbar^j`` component.
+        """
+        return self._component(self._chart._combined_position(index))
+
+    def _component(self, position):
+        """Return the component at a 0-based combined position."""
+        return self._components.get(position, SR.zero())
 
     def holomorphic_components(self):
         """Return ``(X^1, ..., X^n)``, the components along ``d/dz^j``."""
-        return tuple(self[j] for j in range(self._chart.dimension()))
+        return tuple(self._component(j) for j in range(self._chart.dimension()))
 
     def antiholomorphic_components(self):
         """Return ``(X^1bar, ..., X^nbar)``, the components along ``d/dzbar^j``."""
         dimension = self._chart.dimension()
-        return tuple(self[dimension + j] for j in range(dimension))
+        return tuple(self._component(dimension + j) for j in range(dimension))
 
     def conditions(self):
         return self._conditions
 
     def _restricted(self, holomorphic):
         dimension = self._chart.dimension()
-        return VectorField(
+        return VectorField._internal(
             self._chart,
             {
                 index: coefficient
@@ -140,9 +172,10 @@ class VectorField:
         """Return the Lie bracket ``[X, Y]^a = X(Y^a) - Y(X^a)``."""
         other = self._coerce(other)
         indices = set(self._components).union(other._components)
-        return VectorField(
+        return VectorField._internal(
             self._chart,
-            {index: self._apply(other[index]) - other._apply(self[index])
+            {index: self._apply(other._component(index))
+             - other._apply(self._component(index))
              for index in indices},
             conditions=self._conditions + other._conditions,
         )
@@ -178,7 +211,7 @@ class VectorField:
         if form.chart != self._chart:
             raise ValueError("the vector field and form belong to different charts")
         terms = {}
-        for basis, coefficient in form.terms().items():
+        for basis, coefficient in form._terms.items():
             for position, index in enumerate(basis):
                 component = self._components.get(index)
                 if component is None:
@@ -188,7 +221,7 @@ class VectorField:
                 terms[remaining] = terms.get(remaining, SR.zero()) + (
                     sign * component * coefficient
                 )
-        return DifferentialForm(
+        return DifferentialForm._internal(
             self._chart,
             terms,
             conditions=self._conditions + form.conditions(),
@@ -205,7 +238,7 @@ class VectorField:
 
     def _formal_conjugate_(self):
         dimension = self._chart.dimension()
-        return VectorField(
+        return VectorField._internal(
             self._chart,
             {
                 (index + dimension if index < dimension else index - dimension):
@@ -219,10 +252,10 @@ class VectorField:
         if isinstance(other, int) and other == 0:
             return self
         other = self._coerce(other)
-        components = self.components()
+        components = dict(self._components)
         for index, coefficient in other._components.items():
             components[index] = components.get(index, SR.zero()) + coefficient
-        return VectorField(
+        return VectorField._internal(
             self._chart, components, conditions=self._conditions + other._conditions
         )
 
@@ -240,7 +273,7 @@ class VectorField:
         if isinstance(scalar, (VectorField, DifferentialForm)):
             return NotImplemented
         scalar = _raw(scalar)
-        return VectorField(
+        return VectorField._internal(
             self._chart,
             {index: coefficient * scalar for index, coefficient in self._components.items()},
             conditions=self._conditions,
@@ -251,12 +284,15 @@ class VectorField:
 
     def __eq__(self, other):
         if isinstance(other, int) and other == 0:
-            other = VectorField(self._chart)
+            other = VectorField._internal(self._chart)
         if not isinstance(other, VectorField) or other.chart != self._chart:
             return False
         indices = set(self._components).union(other._components)
         return all(
-            _is_zero(self[index] - other[index], self._chart) for index in indices
+            _is_zero(
+                self._component(index) - other._component(index), self._chart
+            )
+            for index in indices
         )
 
     def __ne__(self, other):
@@ -302,4 +338,4 @@ class VectorField:
 
 def basis_vector(chart, index):
     """Return the coordinate vector field with combined index ``index``."""
-    return VectorField(chart, {index: SR.one()})
+    return VectorField._internal(chart, {index: SR.one()})
